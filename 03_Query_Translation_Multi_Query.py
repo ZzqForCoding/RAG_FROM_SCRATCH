@@ -17,6 +17,44 @@ from operator import itemgetter
 
 load_dotenv()
 
+"""
+================================================================================
+查询翻译策略（Query Translation）概览
+================================================================================
+当用户问题模糊、表述单一，导致向量检索召回不足时，可以通过"改写问题"来提升检索效果。
+以下是目前主流的几种查询翻译/分解策略：
+
+【1】Multi Query（多角度改写）← 本文件实现
+    思路：让 LLM 把同一个问题改写成多个不同措辞的版本，分别去检索。
+    特点：不改变问题的粒度，只是"换种说法问"。同一问题、不同角度。
+    合并方式：简单并集去重（get_unique_union），不保留排名信息。
+    适用：问题表述不够精确，Embedding 语义匹配有偏差时。
+
+【2】子问题分解（Sub-question Decomposition）
+    思路：把复杂大问题拆成多个更小的子问题，每个子问题独立检索、独立回答，
+          最后把所有子答案汇总成完整答案。
+    特点：问题的粒度变小了，从"一个大问题"变成"多个小问题"。
+    合并方式：每个子问题有独立的检索和生成链，最终合并的是"答案"而非"文档"。
+    适用：问题本身很复杂，包含多个子任务（如"比较A和B的优缺点，再给出建议"）。
+
+【3】逐步回溯法（Step-back Prompting）
+    思路：从具体问题上升到更高层次的抽象问题，先回答这个宏观问题作为"背景知识"，
+          再基于这个背景来回答用户的原始具体问题。
+    特点：问题的抽象层级变了，从"具体"→"宏观"→"具体"。
+    合并方式：先检索宏观问题的文档 → LLM生成宏观答案 → 把宏观答案作为
+          额外上下文，再检索原始问题的文档 → 最终回答。
+    适用：问题涉及大量背景知识，需要先建立共同理解（如"为什么Transformer有用"）。
+
+【4】RAG-Fusion（互逆排序融合）← 下一文件（04）实现
+    思路：与 Multi Query 类似，同样生成多个改写查询分别检索。
+    核心差异：合并方式不是简单去重，而是用 RRF（Reciprocal Rank Fusion）
+          算法对多组检索结果进行智能排序融合。
+    特点：保留排名信息！多组查询都排在前列的文档会获得更高权重，最终有序。
+    适用：检索结果质量参差不齐，需要更科学的文档排序。
+
+================================================================================
+"""
+
 # ===========================
 # 01. 加载本地HTML文档
 # ===========================
@@ -76,6 +114,7 @@ else:
     vectorstore = Chroma.from_documents(
         documents=splits,
         embedding=embeddings,
+        collection_name="my_knowledge_base",  # 必须与加载时一致
         persist_directory=PERSIST_DIR
     )
 
@@ -181,8 +220,6 @@ docs = retrieval_chain.invoke({"question": question})
 #   从输入字典中提取 "question" 字段的值。
 #   例如：输入 {"question": "What is task decomposition?"} → 输出 "What is task decomposition?"
 #   它和 lambda x: x["question"] 等价，但写法更简洁。
-from operator import itemgetter
-
 # RAG Prompt：把检索到的上下文 + 用户问题 塞进模板
 template = """Answer the following question based on this context:
 
