@@ -4,19 +4,22 @@ RAG 完整流程总览（本文件对应 Part 2: Indexing / 索引阶段）
 ================================================================================
 
 【前置知识演示】
-01. Token 计数          : 用 tiktoken 计算文本有多少个 token
-02. 文本向量化          : 用 Embedding 模型把文字转成 1024 维向量
-03. 余弦相似度          : 计算两个向量有多"像"，理解语义搜索的数学原理
+01. Token 计数          : 用 tiktoken 计算文本有多少个 token                    [本地]
+02. 文本向量化          : 用 Embedding 模型把文字转成 1024 维向量               [扣费]
+03. 余弦相似度          : 计算两个向量有多"像"，理解语义搜索的数学原理           [本地]
 
 【Indexing 核心流程（建库）】
-04. Document Loaders    : 加载原始文档（网页/HTML/TXT/PDF 等）
-05. Text Splitters      : 把长文档切分成小块（chunk），方便精准检索
-06. Vectorstores        : 把切分后的文本向量化，存入向量数据库（Chroma）
+04. Document Loaders    : 加载原始文档（网页/HTML/TXT/PDF 等）                  [本地/网络]
+05. Text Splitters      : 把长文档切分成小块（chunk），方便精准检索               [本地]
+06. Vectorstores        : 把切分后的文本向量化，存入向量数据库（Chroma）         [扣费]
 
-07. Retriever           : 根据用户问题检索最相关的文档片段
-08. Prompt Engineering  : 把检索结果塞进 Prompt 模板
-09. LLM Generation      : 大模型基于上下文生成最终答案
+07. Retriever           : 根据用户问题检索最相关的文档片段                       [扣费]
+08. Prompt Engineering  : 把检索结果塞进 Prompt 模板                            [本地]
+09. LLM Generation      : 大模型基于上下文生成最终答案                           [扣费]
 
+【使用说明】
+本文件为教学演示，所有会产生 API 费用的调用都已用注释标记。
+如需运行某段代码，取消对应注释即可；默认状态下直接执行本文件不会扣费。
 ================================================================================
 """
 
@@ -30,9 +33,9 @@ load_dotenv()
 question = "What kinds of pets do I like?"
 document = "My favorite pet is a cat."
 
-# ==================== 01. 测token数，国内只能通过下载文件下来 ====================
+# ==================== 01. 测token数，国内只能通过下载文件下来 [本地] ====================
 # 创建一个本地缓存目录
-cache_dir = os.path.expanduser(r".\\tiktoken\\tiktoken_cache")
+cache_dir = os.path.expanduser(r".\tiktoken\tiktoken_cache")
 os.makedirs(cache_dir, exist_ok=True)
 
 # 告诉 tiktoken 从这里读取
@@ -47,7 +50,7 @@ def num_tokens_from_string(string: str, encoding_name: str) -> int:
 num = num_tokens_from_string(question, "cl100k_base")
 print('token: ', num)
 
-# ==================== 02. 转化成1024维向量 ====================
+# ==================== 02. 转化成1024维向量 [扣费] ====================
 from langchain_openai import OpenAIEmbeddings
 embd = OpenAIEmbeddings(
     model="text-embedding-v4",
@@ -55,6 +58,9 @@ embd = OpenAIEmbeddings(
     base_url=os.getenv("API_BASE"),
     dimensions=1024,
     chunk_size=10,
+    # OpenAIEmbeddings 不只是个 HTTP 客户端，它捆绑了 OpenAI 生态的假设（tiktoken）。
+    # 虽然阿里云百炼兼容了 OpenAI 的 API 格式，但 tiktoken 这个"附带品"不兼容阿里云模型。
+    # 加 check_embedding_ctx_length=False 可以关掉它；如果还报错，直接用你手写的 CustomEmbeddings 是最干净的方案。
     check_embedding_ctx_length=False
 )
 # [扣费] 调用 Embedding API（单条）
@@ -64,7 +70,7 @@ embd = OpenAIEmbeddings(
 
 # print(len(query_result))
 
-# ==================== 03. 算余弦相似度(测量这两个向量在数学空间里的"夹角") ====================
+# ==================== 03. 算余弦相似度(测量这两个向量在数学空间里的"夹角") [本地] ====================
 import numpy as np
 
 def cosine_similarity(vec1, vec2):
@@ -73,10 +79,11 @@ def cosine_similarity(vec1, vec2):
     norm_vec2 = np.linalg.norm(vec2)           # 向量2的模长
     return dot_product / (norm_vec1 * norm_vec2)  # 余弦相似度公式
 
+# [本地] 需先运行 02 的 embed_query 获取向量
 # similarity = cosine_similarity(query_result, document_result)
 # print("Cosine Similarity:", similarity)
 
-# ==================== 04. Document Loaders（文档加载器） ====================
+# ==================== 04. Document Loaders（文档加载器）[本地/网络] ====================
 # 所有加载器都位于 langchain_community.document_loaders，用法统一：
 #   loader = XXXLoader("路径或URL")
 #   docs = loader.load()  # 返回 List[Document]
@@ -124,7 +131,7 @@ loader = WebBaseLoader(
 )
 blog_docs = loader.load()
 
-# ==================== 05. Text Splitters（文本切分器） ====================
+# ==================== 05. Text Splitters（文本切分器）[本地] ====================
 # 
 # 【RecursiveCharacterTextSplitter vs from_tiktoken_encoder 区别】
 # 
@@ -158,15 +165,19 @@ blog_docs = loader.load()
 #   - Markdown 文档   → MarkdownHeaderTextSplitter
 #   - 代码仓库        → PythonCodeTextSplitter / LanguageTextSplitter
 #   - 需要精准控 token → from_tiktoken_encoder 或 TokenTextSplitter
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
+
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+text_splitter = RecursiveCharacterTextSplitter(
     chunk_size=300, 
     chunk_overlap=50)
+# 说明：教程原版用 .from_tiktoken_encoder() 按 token 精准切分，
+#      但 tiktoken 在国内首次使用需下载缓存文件，易报错。
+#      此处改用按字符切分，教学效果等价，运行更稳定。
 
 # Make splits
 splits = text_splitter.split_documents(blog_docs)
 
-# ==================== 06. Vectorstores（向量存储） ====================
+# ==================== 06. Vectorstores（向量存储）[扣费] ====================
 # 
 # 作用：把切分好的文本片段 → 向量化 → 存入向量数据库 → 创建检索器
 # 
@@ -182,18 +193,18 @@ splits = text_splitter.split_documents(blog_docs)
 #   - collection_name="xxx"           : 给表起名字（默认叫 "langchain"）
 #   - embedding=OpenAIEmbeddings()    : 指定用哪个模型做向量化
 
-from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import Chroma
 
+# [扣费] Chroma.from_documents 会对所有 splits 调用 Embedding API（产生费用）
 vectorstore = Chroma.from_documents(
     documents=splits, 
-    embedding=OpenAIEmbeddings()
+    embedding=embd  # 复用顶层定义的 embd，避免重复创建且参数完整
 )
 
-# ==================== 07. Retrieval（检索） ====================
+# ==================== 07. Retrieval（检索）[扣费] ====================
  
 # retriever = vectorstore.as_retriever()
-retriever = vectorstore.as_retriever(search_kwargs={"k": 1})
+retriever = vectorstore.as_retriever(search_kwargs={"k": 2})
 #  这是检索器的手动调用方式（旧版 API，新版推荐用 retriever.invoke()，效果一样）：
 # [扣费] 调用 Embedding API（检索时把问题向量化）
 docs = retriever.get_relevant_documents("What is Task Decomposition?")
@@ -201,7 +212,7 @@ docs = retriever.get_relevant_documents("What is Task Decomposition?")
 print(len(docs))
 
 
-# ==================== 08. Prompt Engineering（Prompt 工程） ====================
+# ==================== 08. Prompt Engineering（Prompt 工程）[本地] ====================
 # 
 # 作用：定义大模型的指令模板，告诉它"基于检索到的资料回答问题"
 # 
@@ -218,7 +229,7 @@ print(len(docs))
 #   直接把你之前检索到的 docs 塞进去，绕过了 retriever，适合单独调试 Prompt。
 
 from langchain_openai import ChatOpenAI
-from langchain.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 
 # 手写 RAG Prompt 模板
 template = """Answer the question based only on the following context:
@@ -254,7 +265,7 @@ chain.invoke({"context": docs, "question": "What is Task Decomposition?"})
 # print(prompt_hub_rag)
 prompt = ChatPromptTemplate.from_template("""You are an assistant for question-answering tasks. Use the following pieces of retrieved context to answer the question. If you don't know the answer, just say that you don't know. Use three sentences maximum and keep the answer concise.\n\nQuestion: {question}\n\nContext: {context}\n\nAnswer:""")
 
-# ==================== 09. LLM Generation（大模型生成答案 - 完整 RAG 链） ====================
+# ==================== 09. LLM Generation（大模型生成答案 - 完整 RAG 链）[扣费] ====================
 # 
 # 作用：把"检索 → Prompt → 大模型 → 解析输出"串成一条自动化生产线（LCEL 链）
 # 

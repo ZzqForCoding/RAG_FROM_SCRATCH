@@ -29,6 +29,10 @@ from langchain_core.embeddings import Embeddings
 from openai import OpenAI
 
 class CustomEmbeddings(Embeddings):
+    """
+    手动封装阿里云 Embedding API。
+    与 OpenAIEmbeddings 的区别：完全可控，不依赖 LangChain 内部逻辑（无 tiktoken 问题）。
+    """
     def __init__(self):
         self.client = OpenAI(
             api_key=os.getenv("API_KEY"),
@@ -57,87 +61,93 @@ class CustomEmbeddings(Embeddings):
         return self.embed_documents([text])[0]
 
 
-# ========== 建库阶段：第一次运行后全部注释掉 ==========
-# # 加载本地HTML文档
-# loader = BSHTMLLoader(
-#     file_path='./documents/LLM Powered Autonomous Agents _ Lil Log.html',
-#     open_encoding='utf-8',  # 关键：强制用 UTF-8 解码
-#     bs_kwargs=dict(
-#         parse_only=bs4.SoupStrainer(
-#             class_=("post-content", "post-title", "post-header")
-#         ),
-#         features="html.parser"
-#     )
-# )
+# ========== 阶段2：建库（自动检测：首次建库，后续复用）==========
+PERSIST_DIR = "./chroma_storage"
+COLLECTION_NAME = "my_knowledge_base"
 
-# """
-# 结构：
-#     Document(page_content='...', metadata={'source': '...', title=''})
-# """
-# docs = loader.load()
+# 统一初始化 Embedding（供建库和查询复用）
 
-# # 分割文档
-# text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-# """
-# 结构：
-# [
-#     Document(page_content='...', metadata={'source': '...', title=''}), 
-#     Document(page_content='...', metadata={'source': '...', title=''}),
-#     Document(page_content='...', metadata={'source': '...', title=''}),
-#     ...
-# ]
-# """
-# splits = text_splitter.split_documents(docs)
-
-# # embed
-# # 1. 自定义embedding
-# # embeddings = CustomEmbeddings()
-# # 2. 使用LangChain提供的封装，阿里百联遵守openai接口规范
-# embeddings = OpenAIEmbeddings(
-#     model="text-embedding-v4",
-#     api_key=os.getenv("API_KEY"),
-#     base_url=os.getenv("API_BASE"),
-#     dimensions=1024,
-#     chunk_size=10,
-#     # OpenAIEmbeddings 不只是个 HTTP 客户端，它捆绑了 OpenAI 生态的假设（tiktoken）。
-#     # 虽然阿里云百炼兼容了 OpenAI 的 API 格式，但 tiktoken 这个"附带品"不兼容阿里云模型。
-#     # 加 check_embedding_ctx_length=False 可以关掉它；如果还报错，直接用你手写的 CustomEmbeddings 是最干净的方案。
-#     check_embedding_ctx_length=False
-# )
-# # 3. DashScopeEmbeddings 
-# # DashScopeEmbeddings 是 LangChain Community 包里的专用封装，但：
-# # 它的参数名是 dashscope_api_key 而不是 api_key
-# # 某些新参数（如 dimensions=1024）可能更新不及时，因为百炼 v4 支持 dimensions 是较新的特性
-# # embeddings = DashScopeEmbeddings(
-# #     model="text-embedding-v4",
-# #     dashscope_api_key=os.getenv("API_KEY")
-# # )
-
-# # 默认内存模式，除非指定persist_directory
-# vectorstore = Chroma.from_documents(
-#     documents=splits,
-#     embedding=embeddings,
-#     collection_name="my_knowledge_base",
-#     persist_directory="./chroma_storage"
-# )
-# ========== 建库阶段结束 ==========
-
-
-# ========== 查询阶段：每次运行只保留这部分 ==========
-# 1. 连接已有向量库（不再生成 embedding，不扣 embedding 费）
+    # embed
+    # 1. 自定义embedding
+    # embeddings = CustomEmbeddings()
+    # 2. 使用LangChain提供的封装，阿里百炼遵守openai接口规范
+    
 embeddings = OpenAIEmbeddings(
     model="text-embedding-v4",
     api_key=os.getenv("API_KEY"),
     base_url=os.getenv("API_BASE"),
     dimensions=1024,
+    chunk_size=10,
+    # OpenAIEmbeddings 不只是个 HTTP 客户端，它捆绑了 OpenAI 生态的假设（tiktoken）。
+    # 虽然阿里云百炼兼容了 OpenAI 的 API 格式，但 tiktoken 这个"附带品"不兼容阿里云模型。
+    # 加 check_embedding_ctx_length=False 可以关掉它；如果还报错，直接用你手写的 CustomEmbeddings 是最干净的方案。
     check_embedding_ctx_length=False
 )
+# 3. DashScopeEmbeddings 
+# DashScopeEmbeddings 是 LangChain Community 包里的专用封装，但：
+# 它的参数名是 dashscope_api_key 而不是 api_key
+# 某些新参数（如 dimensions=1024）可能更新不及时，因为百炼 v4 支持 dimensions 是较新的特性
+# embeddings = DashScopeEmbeddings(
+#     model="text-embedding-v4",
+#     dashscope_api_key=os.getenv("API_KEY")
+# )
 
-vectorstore = Chroma(
-    persist_directory="./chroma_storage",
-    embedding_function=embeddings,
-    collection_name="my_knowledge_base"
-)
+if os.path.exists(PERSIST_DIR) and os.listdir(PERSIST_DIR):
+    # ✅ 已有库：直接加载，不调用 Embedding API（不扣费）
+    print("[INFO] 检测到已有向量库，直接加载，跳过 Embedding 建库...")
+    vectorstore = Chroma(
+        persist_directory=PERSIST_DIR,
+        embedding_function=embeddings,
+        collection_name=COLLECTION_NAME
+    )
+else:
+    # 💰 首次运行：建库，会对所有 splits 调用 Embedding API（扣费）
+    print("[INFO] 首次运行，正在建库并持久化（此步骤产生 Embedding 费用）...")
+
+    # 加载本地HTML文档
+    loader = BSHTMLLoader(
+        file_path='./documents/LLM Powered Autonomous Agents _ Lil Log.html',
+        open_encoding='utf-8',  # 关键：强制用 UTF-8 解码
+        bs_kwargs=dict(
+            parse_only=bs4.SoupStrainer(
+                class_=("post-content", "post-title", "post-header")
+            ),
+            features="html.parser"
+        )
+    )
+    """
+    结构：
+        Document(page_content='...', metadata={'source': '...', title=''})
+    """
+    docs = loader.load()
+
+    # 分割文档
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    """
+    结构：
+    [
+        Document(page_content='...', metadata={'source': '...', title=''}), 
+        Document(page_content='...', metadata={'source': '...', title=''}),
+        Document(page_content='...', metadata={'source': '...', title=''}),
+        ...
+    ]
+    """
+    splits = text_splitter.split_documents(docs)
+
+    # 默认内存模式，除非指定persist_directory
+    vectorstore = Chroma.from_documents(
+        documents=splits,
+        embedding=embeddings,
+        collection_name=COLLECTION_NAME,
+        persist_directory=PERSIST_DIR
+    )
+# ========== 建库阶段结束 ==========
+
+
+# ========== 阶段3：查询（每次运行）==========
+# 连接已有向量库（不再生成 embedding，不扣 embedding 费）
+# 说明：上面 if/else 已经把 vectorstore 创建好了，这里直接复用
+
 # 默认值k是4
 retriever = vectorstore.as_retriever(search_kwargs={"k": 2})
 
@@ -197,15 +207,19 @@ rag_chain = (
 )
 
 
-# [扣费] 包含检索(embedding) + LLM 生成
-# output = rag_chain.invoke("What is Task Decomposition?")
-# print(output)
-#  [运行示例] rag_chain.invoke("What is Task Decomposition?")
-# 
-# 检索参数：k=2（从向量库召回 2 个最相关的文档片段）
-# 注意：k 控制"参考资料的数量"，不控制"回答的句数"
-"""
-Task Decomposition is a planning technique where a complex task is broken down into smaller, simpler steps. 
-This is commonly done using methods like Chain of Thought prompting, which instructs the model to "think step by step," or Tree of Thoughts, which explores multiple reasoning paths. 
-It can also be achieved through specific prompts, task instructions, or by outsourcing to an external planner.
-"""
+# ==================== 阶段5：执行问答 ====================
+if __name__ == "__main__":
+    # [扣费] 包含检索(embedding) + LLM 生成
+    # [运行示例] rag_chain.invoke("What is Task Decomposition?")
+    # 
+    # 检索参数：k=2（从向量库召回 2 个最相关的文档片段）
+    # 注意：k 控制"参考资料的数量"，不控制"回答的句数"
+    output = rag_chain.invoke("What is Task Decomposition?")
+    print(output)
+    
+    """
+    预期输出示例：
+    Task Decomposition is a planning technique where a complex task is broken down into smaller, simpler steps. 
+    This is commonly done using methods like Chain of Thought prompting, which instructs the model to "think step by step," or Tree of Thoughts, which explores multiple reasoning paths. 
+    It can also be achieved through specific prompts, task instructions, or by outsourcing to an external planner.
+    """
