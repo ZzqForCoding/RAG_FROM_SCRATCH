@@ -67,10 +67,10 @@ COLLECTION_NAME = "my_knowledge_base"
 
 # 统一初始化 Embedding（供建库和查询复用）
 
-    # embed
-    # 1. 自定义embedding
-    # embeddings = CustomEmbeddings()
-    # 2. 使用LangChain提供的封装，阿里百炼遵守openai接口规范
+# embed
+# 1. 自定义embedding
+# embeddings = CustomEmbeddings()
+# 2. 使用LangChain提供的封装，阿里百炼遵守openai接口规范
     
 embeddings = OpenAIEmbeddings(
     model="text-embedding-v4",
