@@ -1,6 +1,7 @@
 documents/*
 venv
 chroma_storage/*
+chroma_routing_storage/*
 .env
 __pycache__/
 *.pyc
