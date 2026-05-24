@@ -32,6 +32,9 @@ rag-lancedb/
 ├── 08_Query_Routing.py               # 查询路由：LLM Router + Embedding Router
 ├── 08_Query_Routing_LangGraph.py     # 查询路由的 LangGraph 实现
 ├── 09_Query_Analysis.py              # 结构化查询分析：自然语言 → filter 参数
+├── 10_Multi_Vector_Retriever.py      # 多向量检索器：检索用摘要，返回用原文
+├── 11_RAPTOR.py                      # RAPTOR：UMAP + GMM 聚类 + 递归摘要树
+├── 12_ColBERT.py                     # ColBERT：token 级多向量 + MaxSim 迟交互
 └── chroma_storage/                   # Chroma 向量数据库持久化目录
 ```
 
@@ -46,6 +49,9 @@ rag-lancedb/
 | `07_Query_Translation_HyDE.py` | 让 LLM 生成假设文档，用文档语义做向量检索 | **空间转换** |
 | `08_Query_Routing.py` | 多知识库 / 多 Prompt 场景下，LLM 或 Embedding 判断意图选路 | **意图分流** |
 | `09_Query_Analysis.py` | 从自然语言提取结构化过滤参数（时间、数值范围等）| **参数提取** |
+| `10_Multi_Vector_Retriever.py` | LLM 生成摘要存入向量库，检索命中后返回完整原文 | **检索用小块，回答用大块** |
+| `11_RAPTOR.py` | UMAP 降维 + GMM 软聚类 + 递归 LLM 摘要的多层树检索 | **层级摘要聚合** |
+| `12_ColBERT.py` | token 级多向量独立编码 + MaxSim 迟交互精确匹配 | **细粒度精确检索** |
 
 ## 🎯 查询翻译策略总览
 
@@ -100,6 +106,81 @@ rag-lancedb/
 - **Embedding Routing**：用向量相似度匹配预设模板（快但泛化弱）
 
 **Query Analysis（09）** 解决"用户说话"到"结构化过滤条件"的翻译问题。用 Pydantic Schema + LLM 结构化输出，自动从自然语言中提取日期范围、数值区间等约束，直接传给向量库的 metadata filter。
+
+### 高级检索架构（10~12）
+
+10~12 从"怎么问"转向"怎么存"——优化检索的数据结构和索引方式：
+
+```
+10 Multi-Vector Retriever          11 RAPTOR                         12 ColBERT
+     ┌──────────────────┐            ┌──────────────────┐            ┌──────────────────┐
+     │  VectorStore     │            │  Level 2 根摘要   │            │  token 级向量     │
+     │  存: 摘要向量     │            │     ↗   ↖        │            │  v1 v2 v3 ... vN  │
+     │  搜: 语义匹配     │            │  Level 1 聚类摘要  │            │  ↓ MaxSim        │
+     └──────────────────┘            │   ↗  ↗  ↖  ↖    │            │  查询逐token匹配   │
+            doc_id                   │ 原始文档(leaf)    │            └──────────────────┘
+            ↓                        └──────────────────┘
+     ┌──────────────────┐
+     │  DocStore        │         纵向：跨chunk聚合               横向：token级展开
+     │  存: 原始完整文档  │         解决"丢失全局信息"              解决"丢失细节"
+     └──────────────────┘
+
+     核心理念：                      核心理念：                      核心理念：
+     检索与回答解耦                  层级压缩信息                    token 级保留语义
+```
+
+| 策略 | 维度 | 核心思想 | 适用场景 | 文件 |
+|------|------|---------|---------|------|
+| **Multi-Vector** | 检索架构 | 摘要做索引，原文做上下文，检索精度和生成质量分别优化 | 长文档、需要完整上下文的场景 | `10` |
+| **RAPTOR** | 检索架构 | 递归聚类 + LLM 摘要构建多层树，解决跨 chunk 的全局理解 | 跨文档问答、需要多粒度信息的场景 | `11` |
+| **ColBERT** | 检索架构 | 每个 token 独立向量，MaxSim 做 token 级别交互打分 | 精确匹配（法规/专利/代码搜索） | `12` |
+
+**三者关系**：Multi-Vector 和 ColBERT 同属"多向量"思路但粒度不同——前者是段落级（摘要/chunk），后者是 token 级。RAPTOR 与它们正交——前两者解决"横向展开"，RAPTOR 解决"纵向聚合"。
+
+---
+
+## 🧭 剩余可学：RAG 技术全景
+
+本项目已覆盖 RAG From Scratch 系列的 Part 1-14。剩余 Part 15-18 及更广泛的 RAG 技术如下：
+
+### 一、RAG From Scratch 后续
+
+| Part | 主题 | 说明 | 实现难度 |
+|------|------|------|---------|
+| 15 | **Re-ranking（重排序）** | 向量粗筛 → Cohere Rerank / Cross-Encoder 精排，显著提升检索精度 | ⭐⭐ |
+| 16 | **CRAG（纠正式 RAG）** | LLM 评估检索质量 → 不相关的自动去 web 搜索替换，闭环纠错 | ⭐⭐⭐ |
+| 17 | **Self-RAG（自反思 RAG）** | 模型自己决定要不要检索、检索什么、检索结果靠不靠谱 | ⭐⭐⭐⭐ |
+| 18 | **长上下文 vs RAG** | 128K 窗口时代 RAG 还有没有必要？"Lost in the Middle" 现象分析 | ⭐ |
+
+### 二、RAG 进阶技术扩展
+
+| 技术 | 说明 | 核心价值 |
+|------|------|---------|
+| **GraphRAG** | 微软方案，用知识图谱 + 社区检测替代纯向量检索 | 全局理解、跨文档推理 |
+| **Hybrid Search** | 向量检索 + BM25 关键词检索混合，互补召回 | 兼顾语义和精确匹配 |
+| **Agentic RAG** | RAG + Agent 结合，检索→判断→行动→再检索的自主循环 | 复杂多步任务 |
+| **Active RAG** | 检索前先判断"需不需要检索"，避免不必要的检索开销 | 减少无效检索 |
+| **Multi-Modal RAG** | 图像/表格/视频等多模态内容检索 + 生成 | 富媒体知识库 |
+| **Streaming RAG** | 检索结果流式注入，边检索边生成，降低首字延迟 | 低延迟场景 |
+| **Adaptive RAG** | 根据问题复杂度自动选择检索策略（简单→直接，复杂→分解） | 动态路由 |
+| **RAG 评估** | RAGAS / TruLens 等框架，评估忠实度、相关性、上下文精度 | 质量保障 |
+| **Caching & 缓存** | GPTCache / 语义缓存，相同/相似问题直接返回缓存结果 | 降低成本 |
+| **Fine-tuning + RAG** | 微调 Embedding 模型 / LLM 领域适配 + RAG 检索 | 垂直领域提升 |
+
+### 三、学习建议
+
+```
+当前已掌握（01-12）：
+  查询翻译（Multi Query / Fusion / Decomposition / Step-Back / HyDE）
+  + 路由与过滤（Routing / Query Analysis）
+  + 检索架构（Multi-Vector / RAPTOR / ColBERT）
+  ─────────────────────────────────────────────
+  下一步推荐路径：
+    ✅ 最实用 → Re-ranking（15），立竿见影提升检索质量
+    ✅ 最前沿 → GraphRAG，微软方案、社区活跃
+    ✅ 最工程 → 评估（RAGAS），没有评估就无法迭代
+    ✅ 最系统 → Agentic RAG，检索+行动+反思的完整闭环
+```
 
 ---
 
