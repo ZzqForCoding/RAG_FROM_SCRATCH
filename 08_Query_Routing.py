@@ -420,22 +420,22 @@ def route_and_answer(inputs: dict) -> str:
 # -----------------------------
 # A7. 测试完整链路
 # -----------------------------
-if __name__ == "__main__":
-    print("\n" + "=" * 60)
-    print("【LLM-based Routing 完整链路测试】")
-    print("=" * 60)
+# if __name__ == "__main__":
+#     print("\n" + "=" * 60)
+#     print("【LLM-based Routing 完整链路测试】")
+#     print("=" * 60)
 
-    test_q = "Python 的装饰器是什么，怎么使用？"
-    print(f"问题: {test_q}\n")
-    answer = route_and_answer({"question": test_q})
-    print(f"\n回答:\n{answer}")
+#     test_q = "Python 的装饰器是什么，怎么使用？"
+#     print(f"问题: {test_q}\n")
+#     answer = route_and_answer({"question": test_q})
+#     print(f"\n回答:\n{answer}")
 
-    print("\n" + "-" * 60)
+#     print("\n" + "-" * 60)
 
-    test_q2 = "Go 的 channel 怎么用？"
-    print(f"问题: {test_q2}\n")
-    answer2 = route_and_answer({"question": test_q2})
-    print(f"\n回答:\n{answer2}")
+#     test_q2 = "Go 的 channel 怎么用？"
+#     print(f"问题: {test_q2}\n")
+#     answer2 = route_and_answer({"question": test_q2})
+#     print(f"\n回答:\n{answer2}")
 
 
 # ==============================================================================
@@ -558,22 +558,22 @@ embedding_rag_chain = (
 # -----------------------------
 # B5. 测试 Embedding Routing
 # -----------------------------
-# if __name__ == "__main__":
-#     print("\n" + "=" * 60)
-#     print("【Embedding-based Routing 测试】")
-#     print("=" * 60)
+if __name__ == "__main__":
+    print("\n" + "=" * 60)
+    print("【Embedding-based Routing 测试】")
+    print("=" * 60)
 
-#     physics_question = "黑洞是什么？它是怎么形成的？"
-#     print(f"\n问题（物理）: {physics_question}")
-#     answer = embedding_rag_chain.invoke(physics_question)
-#     print(f"\n回答:\n{answer}")
+    physics_question = "黑洞是什么？它是怎么形成的？"
+    print(f"\n问题（物理）: {physics_question}")
+    answer = embedding_rag_chain.invoke(physics_question)
+    print(f"\n回答:\n{answer}")
 
-#     print("\n" + "-" * 60)
+    print("\n" + "-" * 60)
 
-#     math_question = "如何证明费马大定理？"
-#     print(f"\n问题（数学）: {math_question}")
-#     answer = embedding_rag_chain.invoke(math_question)
-#     print(f"\n回答:\n{answer}")
+    math_question = "如何证明费马大定理？"
+    print(f"\n问题（数学）: {math_question}")
+    answer = embedding_rag_chain.invoke(math_question)
+    print(f"\n回答:\n{answer}")
 
 
 # ==============================================================================

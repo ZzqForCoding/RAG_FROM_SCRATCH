@@ -20,6 +20,7 @@ rag-lancedb/
 ├── .env                              # API 密钥配置（已被 .gitignore 忽略）
 ├── .gitignore
 ├── README.md
+├── RAG_Learning_Notes.md             # 学习笔记与架构思考
 ├── numpy_practice.py                 # NumPy 向量运算练习
 ├── 01_Rag_From_Scraft_example.py     # 完整 RAG 应用（检索 + 生成）
 ├── 02_RAG_Basics_and_Indexing.py     # RAG 原理与建库流程
@@ -28,6 +29,9 @@ rag-lancedb/
 ├── 05_Query_Translation_Decomposition.py # 问题分解：递归回答 & 独立汇总
 ├── 06_Query_Translation_Step_Back.py     # Step-Back：抽象提升 + 双路检索
 ├── 07_Query_Translation_HyDE.py          # HyDE：假设文档嵌入
+├── 08_Query_Routing.py               # 查询路由：LLM Router + Embedding Router
+├── 08_Query_Routing_LangGraph.py     # 查询路由的 LangGraph 实现
+├── 09_Query_Analysis.py              # 结构化查询分析：自然语言 → filter 参数
 └── chroma_storage/                   # Chroma 向量数据库持久化目录
 ```
 
@@ -40,6 +44,8 @@ rag-lancedb/
 | `05_Query_Translation_Decomposition.py` | 复杂问题拆成子问题，递归传递或独立回答后汇总 | **纵向拆解** |
 | `06_Query_Translation_Step_Back.py` | 具体问题抽象成宏观问题，双路检索融合回答 | **抽象提升** |
 | `07_Query_Translation_HyDE.py` | 让 LLM 生成假设文档，用文档语义做向量检索 | **空间转换** |
+| `08_Query_Routing.py` | 多知识库 / 多 Prompt 场景下，LLM 或 Embedding 判断意图选路 | **意图分流** |
+| `09_Query_Analysis.py` | 从自然语言提取结构化过滤参数（时间、数值范围等）| **参数提取** |
 
 ## 🎯 查询翻译策略总览
 
@@ -60,6 +66,12 @@ rag-lancedb/
 
     Multi Query / RAG-Fusion ───→ 水平方向：同一粒度的多种表述
                                   "任务分解" → ["任务拆解", "任务细分", "子任务划分"]
+
+    Routing ────────────────────→ 意图分流：多库/多链 → 选最合适的一个
+                                  用户问题 → [LLM判断/Embedding匹配] → 选数据源/Prompt
+
+    Query Analysis ─────────────→ 参数提取：自然语言 → 结构化过滤条件
+                                  "2023年后少于5分钟的视频" → {date>=2023, length<300}
 ```
 
 | 策略 | 方向 | 核心思想 | 适用场景 | 文件 |
@@ -69,10 +81,31 @@ rag-lancedb/
 | **Decomposition** | 向下 | 把复杂问题拆成多个子问题分别处理 | 问题包含多个独立子任务 | `05` |
 | **Step Back** | 向上 | 把具体问题提升到更宏观的层次 | 需要背景知识才能理解细节 | `06` |
 | **HyDE** | 空间转换 | 生成假设文档，用文档语义去检索 | 查询短/模糊，与文档用词差异大 | `07` |
+| **Routing** | 意图分流 | 多库/多链场景下先判断意图再选对的路 | 多知识库、多Prompt风格、多数据源 | `08` |
+| **Query Analysis** | 参数提取 | 从自然语言自动提取结构化过滤条件 | 多维过滤搜索、需从用户输入解析约束 | `09` |
+
+### 路由与结构化查询（08~09）
+
+08 和 09 是查询翻译的"前置步骤"——在决定"怎么问更好"之前，先决定"去哪搜"和"搜什么"：
+
+```
+用户问题
+  ├─→ [08 Routing]     意图分流 → 选数据源 / 选 Prompt 风格
+  ├─→ [09 Query Analysis] 参数提取 → 从自然语言中提取 filter 条件
+  └─→ [03~07]          查询翻译 → 改写 / 拆解 / 提升 / 转换
+```
+
+**Routing（08）** 解决多知识库/多 Prompt 场景下的选择问题。两种实现：
+- **LLM Routing**：用结构化输出让 LLM 判断意图（准确但贵）
+- **Embedding Routing**：用向量相似度匹配预设模板（快但泛化弱）
+
+**Query Analysis（09）** 解决"用户说话"到"结构化过滤条件"的翻译问题。用 Pydantic Schema + LLM 结构化输出，自动从自然语言中提取日期范围、数值区间等约束，直接传给向量库的 metadata filter。
+
+---
 
 ## 🤔 延伸思考：从查询翻译到 AI 编排
 
-写完 `03~06` 的代码后，一个自然的问题浮现：**用户的每个问题都要走固定的查询翻译链路吗？** 显然不是——简单事实问题直接检索就够了，模糊问题才需要 Multi Query，复杂问题才需要 Decomposition。这就引出了**编排（Orchestration）**的核心命题：
+写完 `03~09` 的代码后，一个自然的问题浮现：**用户的每个问题都要走固定的查询翻译链路吗？** 显然不是——简单事实问题直接检索就够了，模糊问题才需要 Multi Query，复杂问题才需要 Decomposition。这就引出了**编排（Orchestration）**的核心命题：
 
 > **系统如何根据问题的特征，动态选择合适的处理链路？**
 

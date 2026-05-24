@@ -2,6 +2,8 @@ documents/*
 venv
 chroma_storage/*
 chroma_routing_storage/*
+chroma_youtube_storage/*
+chroma_normal_storage/*
 .env
 __pycache__/
 *.pyc
